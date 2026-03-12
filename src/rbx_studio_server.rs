@@ -92,10 +92,10 @@ impl ServerHandler for RBXStudioServer {
                 website_url: None,
             },
             instructions: Some(
-                "You must aware of current studio mode before using any tools, infer the mode from conversation context or get_studio_mode.
-User run_code to query data from Roblox Studio place or to change it
+                "You must be aware of current studio mode before using any tools, infer the mode from conversation context or get_studio_mode.
+Do NOT use run_code unless the user explicitly asks you to run code or query something in Studio. Never call run_code proactively to move the camera, teleport the player, or perform actions the user did not request. run_code is for read-only inspection of the live datamodel only — to make permanent changes, edit the user's local source code instead.
 After calling run_script_in_play_mode, the datamodel status will be reset to stop mode.
-Prefer using start_stop_play tool instead run_script_in_play_mode, Only used run_script_in_play_mode to run one time unit test code on server datamodel.
+Prefer using start_stop_play tool instead of run_script_in_play_mode. Only use run_script_in_play_mode to run one-time unit test code on the server datamodel.
 "
                     .to_string(),
             ),
@@ -160,7 +160,7 @@ impl RBXStudioServer {
     }
 
     #[tool(
-        description = "Runs a command in Roblox Studio and returns the printed output. Can be used to both make changes and retrieve information"
+        description = "Runs a Luau command in Roblox Studio and returns the printed output. Only use this tool when the user explicitly asks you to run code or query data from the Studio datamodel. Do not call this tool proactively or on your own initiative. This tool is for READ-ONLY inspection of the live datamodel — do not use it to make changes, as any modifications are temporary and lost when play mode restarts. To make permanent changes, edit the user's local source code instead."
     )]
     async fn run_code(
         &self,

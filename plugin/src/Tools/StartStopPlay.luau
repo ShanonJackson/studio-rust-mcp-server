@@ -50,9 +50,16 @@ local function startPlay(): string?
 	return result
 end
 
+local STOP_POLL_INTERVAL = 0.05
+local STOP_TIMEOUT = 5
+
 local function stop(): string?
 	GameStopUtil.stopPlay()
-	wait(1)
+	local elapsed = 0
+	while not GameStopUtil.isStopCompleted() and elapsed < STOP_TIMEOUT do
+		task.wait(STOP_POLL_INTERVAL)
+		elapsed += STOP_POLL_INTERVAL
+	end
 	GlobalVariables.studioMode = "stop"
 	return "Stopped"
 end
