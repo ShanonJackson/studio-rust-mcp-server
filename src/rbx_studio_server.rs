@@ -18,6 +18,9 @@ use tokio::sync::{mpsc, watch, Mutex};
 use tokio::time::Duration;
 use uuid::Uuid;
 
+#[cfg(target_os = "windows")]
+use base64::Engine as _;
+
 pub const STUDIO_PLUGIN_PORT: u16 = 44755;
 const LONG_POLL_DURATION: Duration = Duration::from_secs(15);
 
@@ -116,6 +119,9 @@ struct GetConsoleOutput {}
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, Clone)]
 struct GetStudioMode {}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, Clone)]
+struct TakeScreenshot {}
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, Clone)]
 struct StartStopPlay {
@@ -219,6 +225,16 @@ impl RBXStudioServer {
     ) -> Result<CallToolResult, ErrorData> {
         self.generic_tool_run(ToolArgumentValues::GetStudioMode(args))
             .await
+    }
+
+    #[tool(
+        description = "Take a screenshot of the Roblox Studio window. Returns the screenshot as a PNG image."
+    )]
+    async fn take_screenshot(
+        &self,
+        Parameters(_args): Parameters<TakeScreenshot>,
+    ) -> Result<CallToolResult, ErrorData> {
+        Self::capture_studio_screenshot()
     }
 
     async fn generic_tool_run(
@@ -353,5 +369,77 @@ pub async fn dud_proxy_loop(state: PackedState, exit: Receiver<()>) {
         } else {
             waiter.changed().await.unwrap();
         }
+    }
+}
+
+// Screenshot implementation
+impl RBXStudioServer {
+    #[cfg(target_os = "windows")]
+    fn capture_studio_screenshot() -> std::result::Result<CallToolResult, ErrorData> {
+        use image::ImageEncoder;
+        use win_screenshot::prelude::*;
+
+        // Base64 adds ~33% overhead, so PNG must be under ~750KB to stay within 1MB tool result limit.
+        const MAX_DIMENSION: u32 = 1280;
+
+        let windows = window_list().map_err(|e| {
+            ErrorData::internal_error(format!("Failed to enumerate windows: {e:?}"), None)
+        })?;
+
+        let studio_window = windows
+            .iter()
+            .find(|w| w.window_name.contains("Roblox Studio"))
+            .ok_or_else(|| {
+                ErrorData::invalid_request(
+                    "Roblox Studio window not found. Make sure Roblox Studio is open.",
+                    None,
+                )
+            })?;
+
+        let buf = capture_window(studio_window.hwnd).map_err(|e| {
+            ErrorData::internal_error(
+                format!("Failed to capture Roblox Studio window: {e}"),
+                None,
+            )
+        })?;
+
+        let img = image::RgbaImage::from_raw(buf.width, buf.height, buf.pixels).ok_or_else(|| {
+            ErrorData::internal_error("Failed to create image from capture buffer", None)
+        })?;
+
+        // Scale down if either dimension exceeds the limit
+        let img = if buf.width > MAX_DIMENSION || buf.height > MAX_DIMENSION {
+            let scale = MAX_DIMENSION as f64 / buf.width.max(buf.height) as f64;
+            let new_w = (buf.width as f64 * scale) as u32;
+            let new_h = (buf.height as f64 * scale) as u32;
+            image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
+
+        let (w, h) = img.dimensions();
+        let mut png_bytes = Vec::new();
+        let encoder = image::codecs::png::PngEncoder::new(std::io::Cursor::new(&mut png_bytes));
+        encoder
+            .write_image(&img, w, h, image::ExtendedColorType::Rgba8)
+            .map_err(|e| {
+                ErrorData::internal_error(format!("Failed to encode screenshot as PNG: {e}"), None)
+            })?;
+
+        let base64_str =
+            base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+
+        Ok(CallToolResult::success(vec![Content::image(
+            base64_str,
+            "image/png",
+        )]))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn capture_studio_screenshot() -> std::result::Result<CallToolResult, ErrorData> {
+        Err(ErrorData::invalid_request(
+            "Screenshot tool is only available on Windows",
+            None,
+        ))
     }
 }

@@ -21,6 +21,7 @@ Tools included:
 - start_stop_play
 - run_script_in_play_mode
 - get_studio_mode
+- take_screenshot
 
 MCP Clients set up:
 {successes}
