@@ -28,6 +28,7 @@ win-screenshot = "4.0"
 native-dialog = "0.9"
 security-translocate = "0.2.1"
 core-foundation = "0.10.0"
+xcap = "0.0"
 
 [build-dependencies]
 rojo = "7.6.1"

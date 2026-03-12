@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, watch, Mutex};
 use tokio::time::Duration;
 use uuid::Uuid;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use base64::Engine as _;
 
 pub const STUDIO_PLUGIN_PORT: u16 = 44755;
@@ -435,10 +435,81 @@ impl RBXStudioServer {
         )]))
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    fn capture_studio_screenshot() -> std::result::Result<CallToolResult, ErrorData> {
+        use image::ImageEncoder;
+        use xcap::Window;
+
+        const MAX_DIMENSION: u32 = 1280;
+
+        let windows = Window::all().map_err(|e| {
+            ErrorData::internal_error(format!("Failed to enumerate windows: {e}"), None)
+        })?;
+
+        let studio_window = windows
+            .iter()
+            .find(|w| {
+                w.title()
+                    .map(|t| t.contains("Roblox Studio"))
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| {
+                ErrorData::invalid_request(
+                    "Roblox Studio window not found. Make sure Roblox Studio is open.",
+                    None,
+                )
+            })?;
+
+        if studio_window.is_minimized().unwrap_or(false) {
+            return Err(ErrorData::invalid_request(
+                "Roblox Studio window is minimized. Please restore the window before taking a screenshot — macOS cannot capture minimized windows.",
+                None,
+            ));
+        }
+
+        let img = studio_window.capture_image().map_err(|e| {
+            ErrorData::internal_error(
+                format!(
+                    "Failed to capture Roblox Studio window: {e}. \
+                     On macOS, ensure Screen Recording permission is granted in \
+                     System Settings > Privacy & Security > Screen Recording."
+                ),
+                None,
+            )
+        })?;
+
+        // Scale down if either dimension exceeds the limit
+        let (orig_w, orig_h) = img.dimensions();
+        let img = if orig_w > MAX_DIMENSION || orig_h > MAX_DIMENSION {
+            let scale = MAX_DIMENSION as f64 / orig_w.max(orig_h) as f64;
+            let new_w = (orig_w as f64 * scale) as u32;
+            let new_h = (orig_h as f64 * scale) as u32;
+            image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
+
+        let (w, h) = img.dimensions();
+        let mut png_bytes = Vec::new();
+        let encoder = image::codecs::png::PngEncoder::new(std::io::Cursor::new(&mut png_bytes));
+        encoder
+            .write_image(&img, w, h, image::ExtendedColorType::Rgba8)
+            .map_err(|e| {
+                ErrorData::internal_error(format!("Failed to encode screenshot as PNG: {e}"), None)
+            })?;
+
+        let base64_str = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+
+        Ok(CallToolResult::success(vec![Content::image(
+            base64_str,
+            "image/png",
+        )]))
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     fn capture_studio_screenshot() -> std::result::Result<CallToolResult, ErrorData> {
         Err(ErrorData::invalid_request(
-            "Screenshot tool is only available on Windows",
+            "Screenshot tool is only available on Windows and macOS",
             None,
         ))
     }
